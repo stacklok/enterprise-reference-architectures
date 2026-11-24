@@ -1,0 +1,127 @@
+# SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Every certificate the architecture uses, issued by cert-manager:
+#   - kind-keycloak-root-ca signs the Gateway's *.127-0-0-1.sslip.io certificate. up.sh
+#     copies its ca.crt to the kind-keycloak-ca ConfigMap, which pods that call a public
+#     hostname (OIDC discovery, the Directory's issuer checks) trust, and to .state/ca.crt
+#     for this machine.
+#   - kind-keycloak-grpc-ca and kind-keycloak-webhook-ca sign Enterprise Manager's gRPC and
+#     webhook listeners. They are namespaced, so the SEP namespace's internal CAs stay out
+#     of cluster scope.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: kind-keycloak-selfsigned
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: kind-keycloak-root-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  commonName: SEP kind-keycloak root CA
+  secretName: kind-keycloak-root-ca
+  duration: 87600h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  # A machine that trusts this CA trusts it for 127-0-0-1.sslip.io names only, so its key
+  # cannot vouch for any other site.
+  nameConstraints:
+    critical: true
+    permitted:
+      dnsDomains:
+        - 127-0-0-1.sslip.io
+  issuerRef:
+    name: kind-keycloak-selfsigned
+    kind: ClusterIssuer
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: kind-keycloak-root-ca
+spec:
+  ca:
+    secretName: kind-keycloak-root-ca
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: kind-keycloak-tls
+  namespace: traefik
+spec:
+  secretName: kind-keycloak-tls
+  commonName: "*.127-0-0-1.sslip.io"
+  dnsNames:
+    - "*.127-0-0-1.sslip.io"
+  duration: 8760h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: kind-keycloak-root-ca
+    kind: ClusterIssuer
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: kind-keycloak-selfsigned
+  namespace: stacklok
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: kind-keycloak-grpc-ca
+  namespace: stacklok
+spec:
+  isCA: true
+  commonName: kind-keycloak-grpc-ca
+  secretName: kind-keycloak-grpc-ca
+  duration: 87600h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: kind-keycloak-selfsigned
+    kind: Issuer
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: kind-keycloak-grpc-ca
+  namespace: stacklok
+spec:
+  ca:
+    secretName: kind-keycloak-grpc-ca
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: kind-keycloak-webhook-ca
+  namespace: stacklok
+spec:
+  isCA: true
+  commonName: kind-keycloak-webhook-ca
+  secretName: kind-keycloak-webhook-ca
+  duration: 87600h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: kind-keycloak-selfsigned
+    kind: Issuer
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: kind-keycloak-webhook-ca
+  namespace: stacklok
+spec:
+  ca:
+    secretName: kind-keycloak-webhook-ca

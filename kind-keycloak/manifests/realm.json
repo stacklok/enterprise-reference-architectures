@@ -1,0 +1,129 @@
+{
+  "realm": "stacklok",
+  "enabled": true,
+  "displayName": "Stacklok Enterprise Platform",
+  "sslRequired": "external",
+  "accessTokenLifespan": 3600,
+  "ssoSessionIdleTimeout": 7200,
+  "ssoSessionMaxLifespan": 36000,
+  "defaultDefaultClientScopes": ["basic", "email", "profile", "roles", "web-origins", "groups"],
+  "defaultOptionalClientScopes": ["offline_access"],
+  "clients": [
+    {
+      "clientId": "stacklok-cloud-ui",
+      "name": "Stacklok Enterprise console",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "${SEP_OIDC_CLIENT_SECRET}",
+      "redirectUris": [
+        "https://ui.127-0-0-1.sslip.io/api/auth/oauth2/callback/oidc",
+        "https://ui.127-0-0-1.sslip.io/api/auth/callback/oidc",
+        "https://connectors.127-0-0-1.sslip.io/oauth/callback"
+      ],
+      "webOrigins": ["+"],
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "attributes": {
+        "post.logout.redirect.uris": "https://ui.127-0-0-1.sslip.io/signin",
+        "oauth2.device.authorization.grant.enabled": "true"
+      },
+      "protocolMappers": [
+        {"name": "registry-server-audience", "protocol": "openid-connect", "protocolMapper": "oidc-audience-mapper", "config": {"included.custom.audience": "registry-server", "id.token.claim": "false", "access.token.claim": "true"}},
+        {"name": "desktop-client-audience", "protocol": "openid-connect", "protocolMapper": "oidc-audience-mapper", "config": {"included.custom.audience": "desktop-client", "id.token.claim": "false", "access.token.claim": "true"}},
+        {"name": "ai-gateway-audience", "protocol": "openid-connect", "protocolMapper": "oidc-audience-mapper", "config": {"included.custom.audience": "ai-gateway", "id.token.claim": "false", "access.token.claim": "true"}},
+        {"name": "connector-gateway-audience", "protocol": "openid-connect", "protocolMapper": "oidc-audience-mapper", "config": {"included.custom.audience": "connector-gateway", "id.token.claim": "false", "access.token.claim": "true"}}
+      ],
+      "defaultClientScopes": ["basic", "openid", "email", "profile", "roles", "groups", "web-origins"],
+      "optionalClientScopes": ["offline_access"]
+    },
+    {
+      "clientId": "desktop-client",
+      "name": "Stacklok CLI (PKCE)",
+      "enabled": true,
+      "publicClient": true,
+      "redirectUris": ["http://localhost/*", "http://127.0.0.1/*"],
+      "webOrigins": ["+"],
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "oauth2.device.authorization.grant.enabled": "true"
+      },
+      "protocolMappers": [
+        {"name": "desktop-client-audience", "protocol": "openid-connect", "protocolMapper": "oidc-audience-mapper", "config": {"included.custom.audience": "desktop-client", "id.token.claim": "false", "access.token.claim": "true"}},
+        {"name": "registry-server-audience", "protocol": "openid-connect", "protocolMapper": "oidc-audience-mapper", "config": {"included.custom.audience": "registry-server", "id.token.claim": "false", "access.token.claim": "true"}},
+        {"name": "ai-gateway-audience", "protocol": "openid-connect", "protocolMapper": "oidc-audience-mapper", "config": {"included.custom.audience": "ai-gateway", "id.token.claim": "false", "access.token.claim": "true"}}
+      ],
+      "defaultClientScopes": ["basic", "openid", "email", "profile", "roles", "groups", "web-origins"],
+      "optionalClientScopes": ["offline_access"]
+    }
+  ],
+  "clientScopes": [
+    {"name": "openid", "protocol": "openid-connect", "attributes": {"include.in.token.scope": "false", "display.on.consent.screen": "false"}},
+    {
+      "name": "basic", "protocol": "openid-connect",
+      "attributes": {"include.in.token.scope": "false", "display.on.consent.screen": "false"},
+      "protocolMappers": [
+        {"name": "sub", "protocol": "openid-connect", "protocolMapper": "oidc-sub-mapper", "config": {"introspection.token.claim": "true", "access.token.claim": "true"}},
+        {"name": "auth_time", "protocol": "openid-connect", "protocolMapper": "oidc-usersessionmodel-note-mapper", "config": {"user.session.note": "AUTH_TIME", "claim.name": "auth_time", "jsonType.label": "long", "id.token.claim": "true", "introspection.token.claim": "true", "access.token.claim": "true"}}
+      ]
+    },
+    {
+      "name": "email", "protocol": "openid-connect",
+      "attributes": {"include.in.token.scope": "true", "display.on.consent.screen": "true"},
+      "protocolMappers": [
+        {"name": "email", "protocol": "openid-connect", "protocolMapper": "oidc-usermodel-property-mapper", "config": {"user.attribute": "email", "claim.name": "email", "jsonType.label": "String", "userinfo.token.claim": "true", "id.token.claim": "true", "access.token.claim": "true"}},
+        {"name": "email verified", "protocol": "openid-connect", "protocolMapper": "oidc-usermodel-property-mapper", "config": {"user.attribute": "emailVerified", "claim.name": "email_verified", "jsonType.label": "boolean", "userinfo.token.claim": "true", "id.token.claim": "true", "access.token.claim": "true"}}
+      ]
+    },
+    {
+      "name": "profile", "protocol": "openid-connect",
+      "attributes": {"include.in.token.scope": "true", "display.on.consent.screen": "true"},
+      "protocolMappers": [
+        {"name": "username", "protocol": "openid-connect", "protocolMapper": "oidc-usermodel-property-mapper", "config": {"user.attribute": "username", "claim.name": "preferred_username", "jsonType.label": "String", "userinfo.token.claim": "true", "id.token.claim": "true", "access.token.claim": "true"}},
+        {"name": "full name", "protocol": "openid-connect", "protocolMapper": "oidc-full-name-mapper", "config": {"id.token.claim": "true", "access.token.claim": "true", "userinfo.token.claim": "true"}},
+        {"name": "given name", "protocol": "openid-connect", "protocolMapper": "oidc-usermodel-property-mapper", "config": {"user.attribute": "firstName", "claim.name": "given_name", "jsonType.label": "String", "userinfo.token.claim": "true", "id.token.claim": "true", "access.token.claim": "true"}},
+        {"name": "family name", "protocol": "openid-connect", "protocolMapper": "oidc-usermodel-property-mapper", "config": {"user.attribute": "lastName", "claim.name": "family_name", "jsonType.label": "String", "userinfo.token.claim": "true", "id.token.claim": "true", "access.token.claim": "true"}}
+      ]
+    },
+    {"name": "offline_access", "protocol": "openid-connect", "attributes": {"include.in.token.scope": "true", "display.on.consent.screen": "true"}},
+    {"name": "roles", "protocol": "openid-connect", "attributes": {"include.in.token.scope": "false", "display.on.consent.screen": "false"}},
+    {"name": "web-origins", "protocol": "openid-connect", "attributes": {"include.in.token.scope": "false", "display.on.consent.screen": "false"}},
+    {
+      "name": "groups", "protocol": "openid-connect",
+      "attributes": {"include.in.token.scope": "true", "display.on.consent.screen": "false"},
+      "protocolMappers": [
+        {"name": "groups", "protocol": "openid-connect", "protocolMapper": "oidc-group-membership-mapper", "config": {"full.path": "false", "claim.name": "groups", "id.token.claim": "true", "access.token.claim": "true", "userinfo.token.claim": "true"}}
+      ]
+    }
+  ],
+  "groups": [
+    {"name": "everyone", "path": "/everyone"},
+    {"name": "engineering", "path": "/engineering"},
+    {"name": "finance", "path": "/finance"},
+    {"name": "platform-admins", "path": "/platform-admins"}
+  ],
+  "users": [
+    {
+      "username": "admin", "enabled": true, "emailVerified": true, "email": "admin@example.com",
+      "firstName": "Platform", "lastName": "Admin",
+      "credentials": [{"type": "password", "value": "${SEP_USER_PASSWORD}", "temporary": false}],
+      "groups": ["/everyone", "/engineering", "/platform-admins"],
+      "realmRoles": ["default-roles-stacklok"]
+    },
+    {
+      "username": "alice", "enabled": true, "emailVerified": true, "email": "alice@example.com",
+      "firstName": "Alice", "lastName": "Engineer",
+      "credentials": [{"type": "password", "value": "${SEP_USER_PASSWORD}", "temporary": false}],
+      "groups": ["/everyone", "/engineering"],
+      "realmRoles": ["default-roles-stacklok"]
+    },
+    {
+      "username": "bob", "enabled": true, "emailVerified": true, "email": "bob@example.com",
+      "firstName": "Bob", "lastName": "Analyst",
+      "credentials": [{"type": "password", "value": "${SEP_USER_PASSWORD}", "temporary": false}],
+      "groups": ["/everyone", "/finance"],
+      "realmRoles": ["default-roles-stacklok"]
+    }
+  ]
+}

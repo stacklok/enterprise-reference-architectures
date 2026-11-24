@@ -1,0 +1,332 @@
+# SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
+# SPDX-License-Identifier: Apache-2.0
+#
+# SEP chart values for the kind-keycloak architecture. Each subchart keeps its default image,
+# the release's own build pulled through image-proxy.stacklok.com with the
+# enterprise-pull-secret up.sh creates from SEP_LICENSE_ID; EXTRA_VALUES files layer over
+# this one. Every secret is a reference to a Secret up.sh generates; no value here is a
+# credential.
+#
+# Fixed names: release `stacklok` in namespace `stacklok`, so Enterprise Manager's Service
+# is stacklok-enterprise-manager and each component's ServiceAccount is stacklok-<name>.
+
+replicated:
+  enabled: false
+cloudUi:
+  enabled: true
+toolhiveOperator:
+  enabled: true
+# Charts before the global.stacklok toggles read these; later ones accept both while they
+# agree.
+enterpriseManager:
+  enabled: true
+registryServer:
+  enabled: true
+
+global:
+  stacklok:
+    enterpriseManager:
+      enabled: true
+      url: http://stacklok-enterprise-manager.stacklok.svc
+    registryServer:
+      enabled: true
+    aiGatewayV2:
+      enabled: true
+      url: https://aigw.127-0-0-1.sslip.io
+    connectorGateway:
+      enabled: true
+    # Immutable: the Directory scopes this install's connectors to it.
+    connectorGatewayId: kind-keycloak
+    authServerIssuer: https://connectors.127-0-0-1.sslip.io
+    consoleUrl: https://ui.127-0-0-1.sslip.io
+    audit:
+      enabled: true
+    primaryIdp:
+      issuer: https://auth.127-0-0-1.sslip.io/realms/stacklok
+      clientId: stacklok-cloud-ui
+      clientSecretRef:
+        name: kind-keycloak-oidc-client
+        key: client-secret
+      scopes: "openid,email,profile,groups"
+      # Keycloak names the requesting client in azp.
+      clientClaim: azp
+      # Pods reach the issuer through Traefik's cluster-private Service address.
+      allowPrivateIps: true
+      caBundleRef:
+        configMapRef:
+          name: kind-keycloak-ca
+        key: ca.crt
+  # Enterprise Manager's webhook listener (budgets and model access) is signed by this
+  # issuer, and the AI Gateway trusts its root through the same Secret.
+  webhooks:
+    issuerRef:
+      name: kind-keycloak-webhook-ca
+      kind: Issuer
+    caBundleSecret: kind-keycloak-webhook-ca
+
+enterprise-manager:
+  serviceAccount:
+    create: true
+    automount: true
+  grpc:
+    callerAuth:
+      # kind's kube-apiserver service-account issuer.
+      clusterOidcIssuer: https://kubernetes.default.svc.cluster.local
+      saSubjectAllowlist:
+        - system:serviceaccount:stacklok:stacklok-connector-gateway
+        - system:serviceaccount:stacklok:stacklok-ai-gateway-v2
+      gatewaySaSubjectAllowlist:
+        - system:serviceaccount:stacklok:stacklok-connector-gateway
+      credentialSaSubjectAllowlist:
+        - system:serviceaccount:stacklok:stacklok-connector-gateway
+    tls:
+      enabled: true
+      issuerRef:
+        name: kind-keycloak-grpc-ca
+        kind: Issuer
+    # The Directory KEK requires an ingress policy on the gRPC ports. The chart's
+    # Directory policy admits the gateways.
+    networkPolicy:
+      enabled: true
+      allowedClientSelector:
+        app.kubernetes.io/name: connector-gateway
+  webhookTLS:
+    enabled: true
+  webhookAuth:
+    audience: budgets-webhook
+  database:
+    host: postgres.stacklok.svc.cluster.local
+    port: 5432
+    name: enterprise_manager
+    sslMode: disable
+    user: em_app
+    existingSecret: kind-keycloak-em-db
+    migration:
+      user: em_migrator
+      existingSecret: kind-keycloak-em-db
+    admin:
+      user: em_admin
+      existingSecret: kind-keycloak-em-db
+  defaultRoles:
+    install: true
+  idpConfig:
+    audience: desktop-client
+    idpType: generic
+    requiredScope: ""
+  signingConfig:
+    existingSecret: kind-keycloak-em-signing-key
+    envelopeTTL: 24h
+    refreshInterval: 30s
+  resourceURL: https://em.127-0-0-1.sslip.io
+  clientID: desktop-client
+  trustedCABundle:
+    configMapRef:
+      name: kind-keycloak-ca
+      key: ca.crt
+  directory:
+    enabled: true
+    kek:
+      enabled: true
+      existingSecret: kind-keycloak-directory-kek
+    scimExternalBaseURL: https://em.127-0-0-1.sslip.io
+    # sync-users.sh pushes Keycloak's users and groups here. externalId is the Keycloak
+    # user id, which is the token's sub.
+    issuers:
+      - id: keycloak
+        issuer_url: https://auth.127-0-0-1.sslip.io/realms/stacklok
+        audience: desktop-client
+        binding_claim: sub
+        scim_bearer_token_ref:
+          namespace: stacklok
+          name: kind-keycloak-scim-token
+          key: token
+    # The sample MCP server runs behind a ClusterIP Service in kind's Service range.
+    connectorVerification:
+      allowedPrivateRanges:
+        - 10.96.0.0/16
+  enterpriseConfig:
+    registry:
+      value:
+        api_url: https://registry.127-0-0-1.sslip.io/registry/default
+      enforcement: enforced
+
+toolhive-cloud-ui:
+  apiBaseUrl: http://registry-api.stacklok:8080
+  enterpriseManagerUrl: http://stacklok-enterprise-manager.stacklok.svc
+  betterAuth:
+    existingSecret: kind-keycloak-cloud-ui
+    url: https://ui.127-0-0-1.sslip.io
+  thvCliOidcIssuerUrl: https://auth.127-0-0-1.sslip.io/realms/stacklok
+  thvCliOidcClientId: desktop-client
+
+toolhive-registry-server:
+  upstream:
+    config:
+      sources:
+        - name: toolhive-catalog
+          format: upstream
+          git:
+            repository: https://github.com/stacklok/toolhive-catalog.git
+            branch: main
+            path: pkg/catalog/toolhive/data/registry-upstream.json
+          syncPolicy:
+            interval: 60m
+          claims:
+            groups: everyone
+        - name: kubernetes
+          kubernetes: {}
+          claims:
+            groups: everyone
+      registries:
+        - name: default
+          claims:
+            groups: everyone
+          sources: ["toolhive-catalog", "kubernetes"]
+      auth:
+        mode: oauth
+        oauth:
+          resourceUrl: https://registry.127-0-0-1.sslip.io
+          providers:
+            - name: keycloak
+              issuerUrl: https://auth.127-0-0-1.sslip.io/realms/stacklok
+              audience: registry-server
+              allowPrivateIP: true
+              caCertPath: /etc/ssl/certs/kind-keycloak-ca.crt
+        # Per-entry claims filtering turns on only with at least one role.
+        authz:
+          roles:
+            superAdmin:
+              - groups: platform-admins
+      database:
+        host: postgres.stacklok.svc.cluster.local
+        port: 5432
+        user: db_app
+        migrationUser: db_migrator
+        database: registry
+        sslMode: disable
+    extraEnv:
+      - name: THV_REGISTRY_DATABASE_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: kind-keycloak-registry-db
+            key: app-password
+      - name: THV_REGISTRY_DATABASE_MIGRATIONPASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: kind-keycloak-registry-db
+            key: migrator-password
+    extraVolumes:
+      - name: kind-keycloak-ca
+        configMap:
+          name: kind-keycloak-ca
+    extraVolumeMounts:
+      - name: kind-keycloak-ca
+        mountPath: /etc/ssl/certs/kind-keycloak-ca.crt
+        subPath: ca.crt
+        readOnly: true
+
+connector-gateway:
+  kek:
+    existingSecret: kind-keycloak-connector-gateway-kek
+    # Rolls the pods when the Secret's content changes.
+    keyringGeneration: "1"
+  authServerKeys:
+    existingSecret: kind-keycloak-connector-gateway-auth-keys
+  vmcpConfig:
+    groupRef: connector-gateway
+    incomingAuth:
+      type: oidc
+      # MCP clients register with the scopes the protected-resource metadata lists, then
+      # ask for offline_access to get a refresh token.
+      oidc:
+        issuer: https://connectors.127-0-0-1.sslip.io
+        clientId: connector-gateway
+        audience: https://connectors.127-0-0-1.sslip.io/gw/mcp
+        scopes: ["openid", "offline_access"]
+  enterpriseConfig:
+    authServer:
+      schema_version: v0.1.0
+      allowed_audiences:
+        - https://connectors.127-0-0-1.sslip.io/gw/mcp
+      storage:
+        type: redis
+        redis_config:
+          addr: valkey.stacklok.svc.cluster.local:6379
+          auth_type: aclUser
+          key_prefix: "thv:auth:"
+          acl_user_config:
+            password_env_var: REDIS_PASSWORD
+    # The binding claim comes from enterprise-manager.directory.issuers[].binding_claim.
+    directory:
+      addr: stacklok-enterprise-manager.stacklok:9443
+    controlPlane:
+      incomingAuth:
+        oidc:
+          audience: connector-gateway
+    redis:
+      addr: valkey.stacklok.svc.cluster.local:6379
+      auth_type: aclUser
+      key_prefix: "thv:auth:"
+      acl_user_config:
+        password_env_var: REDIS_PASSWORD
+  directoryTLS:
+    enabled: true
+    caBundle:
+      secretName: kind-keycloak-grpc-ca
+      key: ca.crt
+  extraEnv:
+    - name: REDIS_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: kind-keycloak-valkey
+          key: password
+    - name: VMCP_CONTROL_ENDPOINT_URL
+      value: https://connectors.127-0-0-1.sslip.io/gw/mcp
+
+ai-gateway-v2:
+  replicaCount: 1
+  auth:
+    issuers:
+      - issuer: https://auth.127-0-0-1.sslip.io/realms/stacklok
+        audience: ai-gateway
+        bindingClaim: sub
+        # In-cluster JWKS avoids a hairpin through the Gateway.
+        jwksUri: http://keycloak.stacklok.svc.cluster.local:8080/realms/stacklok/protocol/openid-connect/certs
+  directory:
+    endpoint: stacklok-enterprise-manager.stacklok.svc:9091
+    # The cleartext listener; every call still carries a projected token.
+    insecure: true
+    groupsResolutionIssuer: https://auth.127-0-0-1.sslip.io/realms/stacklok
+    tokenProjection:
+      enabled: true
+  # Metered: a request is refused until an admin sets a budget that covers the caller.
+  budgets:
+    endpoint: https://stacklok-enterprise-manager.stacklok.svc:443
+    tokenProjection:
+      enabled: true
+  modelAccess:
+    enabled: true
+  audit:
+    enabled: true
+  # The in-cluster mock provider up.sh deploys when MOCK_PROVIDER_IMAGE is set. It answers
+  # like Anthropic and OpenAI with a fixed reply, so the gateway works with no provider key.
+  # The blocks are not marked `mock: true`, because that skips the budgets-capture hook and a
+  # request would spend nothing. Helm replaces a list whole, so an EXTRA_VALUES file that puts
+  # a real provider behind the gateway replaces this list (README).
+  providers:
+    - kind: anthropic
+      baseUrl: http://mock-provider.mock-provider.svc.cluster.local:8080
+      models: ["claude-haiku-4-5"]
+      # The mock's Anthropic route refuses a request with no key; this one is a placeholder.
+      credentialSecretRef:
+        name: kind-keycloak-mock-provider
+        key: api-key
+    - kind: openai
+      baseUrl: http://mock-provider.mock-provider.svc.cluster.local:8080
+      models: ["gpt-4o"]
+  httpRoute:
+    enabled: true
+    parentRefs:
+      - name: traefik-gateway
+        namespace: traefik
+        sectionName: websecure

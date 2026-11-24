@@ -1,0 +1,44 @@
+# SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Applied after the SEP chart, whose CRDs these use:
+#   - the platform admin role, bound to the realm's platform-admins group, which grants
+#     Enterprise Manager's admin surfaces (budgets, Model Sets, directory, connectors);
+#   - one sample MCP server, which verify.sh registers as a connector. It needs no
+#     credential, so it runs on any machine.
+apiVersion: platform.enterprise.stacklok.com/v1alpha1
+kind: ClusterPlatformRole
+metadata:
+  name: kind-keycloak-platform-admin
+spec:
+  description: Platform administrator of the kind-keycloak reference architecture.
+  productActions:
+    - apiGroup: admin.enterprise.stacklok.com
+      actions: ["admin"]
+---
+apiVersion: platform.enterprise.stacklok.com/v1alpha1
+kind: ClusterPlatformRoleBinding
+metadata:
+  name: kind-keycloak-platform-admin
+spec:
+  bindings:
+    - roleRef:
+        kind: ClusterPlatformRole
+        name: kind-keycloak-platform-admin
+      from:
+        - groups: ["platform-admins"]
+---
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPServer
+metadata:
+  name: fetch
+  namespace: stacklok
+  annotations:
+    toolhive.stacklok.dev/registry-export: "true"
+    toolhive.stacklok.dev/registry-description: Fetches web pages as markdown.
+    toolhive.stacklok.dev/authz-claims: '{"groups": "everyone"}'
+spec:
+  image: ghcr.io/stackloklabs/gofetch/server:1.0.6
+  transport: streamable-http
+  proxyPort: 8080
+  mcpPort: 8080

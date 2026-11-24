@@ -1,0 +1,39 @@
+# SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Each target runs the script of the same name, which reads its settings (CHART_VERSION,
+# CHART, ...) from the environment; see README.md. The scripts also run on their own, on a
+# machine without Task.
+version: "3"
+
+tasks:
+  up:
+    desc: >
+      Bring SEP up on kind with a bundled Keycloak. Installs CHART_VERSION from
+      oci.stacklok.com with SEP_LICENSE_ID and SEP_LICENSE_EMAIL, or the chart directory
+      CHART with the images in LOAD_IMAGES.
+    cmds:
+      - ./up.sh
+
+  verify:
+    desc: >
+      Smoke-test the running architecture: console sign-in, the SCIM sync, a budget, one
+      AI Gateway request's spend, and a connector a non-admin can see. Exits non-zero on
+      failure.
+    cmds:
+      - ./verify.sh
+
+  sync-users:
+    desc: Push Keycloak's users and groups into SEP's directory over SCIM.
+    cmds:
+      - ./sync-users.sh
+
+  diagnostics:
+    desc: Print every pod, recent events, and the logs of each pod that is not ready.
+    cmds:
+      - ./diagnostics.sh
+
+  down:
+    desc: Delete the kind cluster and this architecture's local state.
+    cmds:
+      - ./down.sh

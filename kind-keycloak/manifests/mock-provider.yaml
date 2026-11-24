@@ -1,0 +1,89 @@
+# SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
+# SPDX-License-Identifier: Apache-2.0
+#
+# The mock LLM provider the AI Gateway routes to (values/sep.yaml). It answers like
+# Anthropic and OpenAI with a fixed reply, so the gateway works with no provider key.
+# up.sh loads MOCK_PROVIDER_IMAGE into kind and substitutes it for the placeholder.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mock-provider
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-provider
+  namespace: mock-provider
+  labels:
+    app: mock-provider
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mock-provider
+  template:
+    metadata:
+      labels:
+        app: mock-provider
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mock-provider
+          image: MOCK_PROVIDER_IMAGE
+          # up.sh loads the image into kind, so the node never pulls it.
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+          env:
+            - name: MOCK_PORT
+              value: "8080"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-provider
+  namespace: mock-provider
+  labels:
+    app: mock-provider
+spec:
+  type: ClusterIP
+  selector:
+    app: mock-provider
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP

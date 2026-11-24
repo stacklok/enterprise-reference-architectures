@@ -1,0 +1,354 @@
+# SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
+# SPDX-License-Identifier: Apache-2.0
+#
+# What SEP needs running before its chart installs: PostgreSQL for Enterprise Manager and
+# the Registry Server, Valkey for the Connector Gateway, Keycloak as the identity provider,
+# and the HTTPRoutes that put each public hostname on the Traefik Gateway. Every password
+# comes from a Secret up.sh generates. Single replicas on small volumes: a proof of
+# concept, not a production topology.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: stacklok
+spec:
+  selector:
+    app.kubernetes.io/name: postgres
+  ports:
+    - name: tcp-5432
+      port: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: stacklok
+  labels:
+    app.kubernetes.io/name: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: docker.io/library/postgres:17
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            - name: POSTGRES_USER
+              value: postgres
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: kind-keycloak-postgres-admin
+                  key: password
+          # The role passwords postgres-init.sh sets.
+          envFrom:
+            - secretRef:
+                name: kind-keycloak-db-roles
+          ports:
+            - name: postgres
+              containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d
+      volumes:
+        - name: init
+          configMap:
+            name: kind-keycloak-postgres-init
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: valkey
+  namespace: stacklok
+spec:
+  selector:
+    app.kubernetes.io/name: valkey
+  ports:
+    - name: tcp-6379
+      port: 6379
+---
+# Holds the Connector Gateway's registered OAuth clients and users' sessions, so it
+# persists to a volume a restart keeps.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: valkey
+  namespace: stacklok
+  labels:
+    app.kubernetes.io/name: valkey
+spec:
+  serviceName: valkey
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: valkey
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: valkey
+    spec:
+      containers:
+        - name: valkey
+          image: docker.io/valkey/valkey:9.2
+          args: ["--requirepass", "$(REDIS_PASSWORD)", "--appendonly", "yes", "--dir", "/data"]
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: kind-keycloak-valkey
+                  key: password
+          ports:
+            - name: redis
+              containerPort: 6379
+          readinessProbe:
+            tcpSocket:
+              port: 6379
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  namespace: stacklok
+spec:
+  selector:
+    app.kubernetes.io/name: keycloak
+  ports:
+    - name: http
+      port: 8080
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: keycloak-data
+  namespace: stacklok
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 256Mi
+---
+# Keycloak in dev-file mode: a proof-of-concept identity provider, never a production one.
+# It imports realm.json on its first start only; the ${SEP_*} placeholders in it resolve
+# from the environment below. Later changes to users live in Keycloak's own volume.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  namespace: stacklok
+  labels:
+    app.kubernetes.io/name: keycloak
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: keycloak
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: keycloak
+    spec:
+      securityContext:
+        fsGroup: 1000
+      containers:
+        - name: keycloak
+          image: quay.io/keycloak/keycloak:26.8.1
+          args: ["start-dev", "--import-realm"]
+          env:
+            - name: KC_DB
+              value: dev-file
+            - name: KC_HEALTH_ENABLED
+              value: "true"
+            - name: KC_HTTP_ENABLED
+              value: "true"
+            # Tokens carry this issuer whether a browser, this machine or a pod asks.
+            - name: KC_HOSTNAME
+              value: https://auth.127-0-0-1.sslip.io
+            # Pods fetch JWKS from the Service name without leaving the cluster.
+            - name: KC_HOSTNAME_BACKCHANNEL_DYNAMIC
+              value: "true"
+            - name: KC_PROXY_HEADERS
+              value: xforwarded
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              value: admin
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: kind-keycloak-keycloak
+                  key: admin-password
+            - name: SEP_USER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: kind-keycloak-keycloak
+                  key: user-password
+            - name: SEP_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: kind-keycloak-oidc-client
+                  key: client-secret
+          ports:
+            - name: http
+              containerPort: 8080
+          startupProbe:
+            httpGet:
+              path: /health/ready
+              port: 9000
+            failureThreshold: 60
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 9000
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            - name: realm
+              mountPath: /opt/keycloak/data/import
+              readOnly: true
+            - name: data
+              mountPath: /opt/keycloak/data/h2
+      volumes:
+        - name: realm
+          configMap:
+            name: kind-keycloak-realm
+        - name: data
+          persistentVolumeClaim:
+            claimName: keycloak-data
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: auth
+  namespace: stacklok
+spec:
+  parentRefs:
+    - name: traefik-gateway
+      namespace: traefik
+      sectionName: websecure
+  hostnames: ["auth.127-0-0-1.sslip.io"]
+  rules:
+    - matches:
+        - path: {type: PathPrefix, value: /realms/}
+        - path: {type: PathPrefix, value: /admin}
+        - path: {type: PathPrefix, value: /js/}
+        - path: {type: PathPrefix, value: /resources/}
+      backendRefs:
+        - name: keycloak
+          port: 8080
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: ui
+  namespace: stacklok
+spec:
+  parentRefs:
+    - name: traefik-gateway
+      namespace: traefik
+      sectionName: websecure
+  hostnames: ["ui.127-0-0-1.sslip.io"]
+  rules:
+    - backendRefs:
+        - name: stacklok-toolhive-cloud-ui
+          port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: em
+  namespace: stacklok
+spec:
+  parentRefs:
+    - name: traefik-gateway
+      namespace: traefik
+      sectionName: websecure
+  hostnames: ["em.127-0-0-1.sslip.io"]
+  rules:
+    - backendRefs:
+        - name: stacklok-enterprise-manager
+          port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: registry
+  namespace: stacklok
+spec:
+  parentRefs:
+    - name: traefik-gateway
+      namespace: traefik
+      sectionName: websecure
+  hostnames: ["registry.127-0-0-1.sslip.io"]
+  rules:
+    - backendRefs:
+        - name: registry-api
+          port: 8080
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: connectors
+  namespace: stacklok
+spec:
+  parentRefs:
+    - name: traefik-gateway
+      namespace: traefik
+      sectionName: websecure
+  hostnames: ["connectors.127-0-0-1.sslip.io"]
+  rules:
+    - backendRefs:
+        - name: stacklok-connector-gateway
+          port: 8443

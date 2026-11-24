@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Traefik is the cluster's Gateway API implementation. Its one Gateway terminates TLS for
+# *.127-0-0-1.sslip.io with the certificate in pki.yaml, on the NodePort kind maps to host
+# port 443. Every SEP surface and Keycloak attach to it with an HTTPRoute.
+service:
+  type: NodePort
+ports:
+  web:
+    port: 80
+    nodePort: 30080
+  websecure:
+    port: 443
+    nodePort: 30443
+ingressClass:
+  enabled: false
+providers:
+  kubernetesIngress:
+    enabled: false
+  kubernetesGateway:
+    enabled: true
+gateway:
+  name: traefik-gateway
+  listeners:
+    web:
+      port: 80
+      protocol: HTTP
+      namespacePolicy:
+        from: All
+    websecure:
+      port: 443
+      protocol: HTTPS
+      mode: Terminate
+      namespacePolicy:
+        from: All
+      certificateRefs:
+        - kind: Secret
+          name: kind-keycloak-tls
+api:
+  dashboard: false
